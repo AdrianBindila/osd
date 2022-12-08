@@ -7,6 +7,8 @@
 #include "mmu.h"
 #include "process_internal.h"
 #include "dmp_cpu.h"
+#include "io.h"
+#include "thread.h"
 
 extern void SyscallEntry();
 
@@ -68,6 +70,28 @@ SyscallHandler(
             status = SyscallValidateInterface((SYSCALL_IF_VERSION)*pSyscallParameters);
             break;
         // STUDENT TODO: implement the rest of the syscalls
+        case SyscallIdFileWrite:
+            status = SyscallFileWrite((UM_HANDLE)pSyscallParameters[0],(PVOID)pSyscallParameters[1],
+                (QWORD)pSyscallParameters[2],(QWORD*)pSyscallParameters[3]);
+            break;
+        case SyscallIdThreadGetTid:
+            status = SyscallThreadGetTid((UM_HANDLE)pSyscallParameters[0], (PVOID)pSyscallParameters[1]);
+            break;
+        case SyscallIdThreadGetName:
+            status = SyscallThreadGetName((char*)pSyscallParameters[0], (QWORD)pSyscallParameters[1]);
+            break;
+        case SyscallIdGetTotalThreadNo:
+            status = SyscallGetTotalThreadNo((QWORD*)pSyscallParameters[0]);
+            break;
+        case SyscallIdGetThreadUmStackAddress:
+            status = SyscallGetThreadUmStackAddress((PVOID*)pSyscallParameters[0]);
+            break;
+        case SyscallIdGetThreadUmStackSize:
+            status = SyscallGetThreadUmStackSize((QWORD*)pSyscallParameters[0]);
+            break;
+        case SyscallIdGetThreadUmEntryPoint:
+            status = SyscallGetThreadUmEntryPoint((PVOID*)pSyscallParameters[0]);
+            break;
         default:
             LOG_ERROR("Unimplemented syscall called from User-space!\n");
             status = STATUS_UNSUPPORTED;
@@ -170,3 +194,81 @@ SyscallValidateInterface(
 }
 
 // STUDENT TODO: implement the rest of the syscalls
+
+STATUS
+SyscallProcessExit(
+    IN      STATUS                  ExitStatus
+)
+{
+    UNREFERENCED_PARAMETER(ExitStatus);
+    ProcessTerminate(NULL);
+    return STATUS_SUCCESS;
+}
+
+STATUS
+SyscallThreadExit(
+    IN  STATUS                      ExitStatus
+)
+{
+    ThreadExit(ExitStatus);
+    return STATUS_SUCCESS;
+}
+
+STATUS
+SyscallFileWrite
+(
+    IN  UM_HANDLE                   FileHandle,
+    IN_READS_BYTES(BytesToWrite)
+    PVOID                           Buffer,
+    IN  QWORD                       BytesToWrite,
+    OUT QWORD*                      BytesWritten
+)
+{
+    if(FileHandle == UM_FILE_HANDLE_STDOUT)
+    {
+        LOG("[%s]:[%s}\n", ProcessGetName(NULL), Buffer);
+        IoWriteFile(FileHandle, BytesToWrite, NULL, Buffer, BytesWritten);
+        return STATUS_SUCCESS;
+    }
+    return STATUS_FILE_TYPE_INVALID;
+}
+
+STATUS
+SyscallThreadGetTid(
+    IN_OPT  UM_HANDLE               ThreadHandle,
+    OUT     TID* ThreadId
+)
+{
+    ThreadId = ThreadGetId((PTHREAD)ThreadHandle);
+    return STATUS_SUCCESS;
+}
+
+STATUS
+SyscallGetTotalThreadNo(
+    OUT QWORD* ThreadNo
+)
+{
+	ThreadNo = ThreadGetRef
+}
+STATUS
+SyscallGetThreadUmStackAddress(
+    OUT PVOID* StackBaseAddress
+)
+{
+	
+}
+STATUS
+SyscallGetThreadUmStackSize(
+    OUT QWORD* StackSize
+)
+{
+	
+}
+
+STATUS
+SyscallGetThreadUmEntryPoint(
+    OUT PVOID* EntryPoint
+)
+{
+	
+}

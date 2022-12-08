@@ -196,3 +196,46 @@ SyscallFileWrite(
 {
     return SyscallEntry(SyscallIdFileWrite, FileHandle, Buffer, BytesToWrite, BytesWritten);
 }
+
+// SyscallThreadGetName
+STATUS
+SyscallThreadGetName(
+    OUT char* ThreadName, 
+    IN QWORD ThreadNameMaxLen
+	)
+{
+    return SyscallEntry(SyscallIdThreadGetName, ThreadName, ThreadNameMaxLen);
+}
+
+// SyscallGetTotalThreadNo
+STATUS
+SyscallGetTotalThreadNo(
+    OUT QWORD* ThreadNo
+)
+{
+    return SyscallEntry(SyscallIdGetTotalThreadNo, ThreadNo);
+}
+// SyscallGetThreadUmStackAddress
+STATUS
+SyscallGetThreadUmStackAddress(
+    OUT PVOID* StackBaseAddress
+)
+{
+    return SyscallEntry(SyscallIdGetThreadUmStackAddress, StackBaseAddress);
+}
+// SyscallGetThreadUmStackSize
+STATUS
+SyscallGetThreadUmStackSize(
+    OUT QWORD* StackSize
+)
+{
+    return SyscallEntry(SyscallIdGetThreadUmStackSize, StackSize);
+}
+// SyscallGetThreadUmEntryPoint
+STATUS
+SyscallGetThreadUmEntryPoint(
+    OUT PVOID* EntryPoint
+)
+{
+    return SyscallEntry(SyscallIdGetThreadUmEntryPoint, EntryPoint);
+}

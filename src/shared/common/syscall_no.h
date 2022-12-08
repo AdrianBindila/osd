@@ -4,6 +4,14 @@ typedef enum _SYSCALL_ID
 {
     SyscallIdIdentifyVersion,
 
+    // Light Project
+	SyscallIdThreadGetName,
+    SyscallIdGetTotalThreadNo,
+    SyscallIdGetThreadUmStackAddress,
+    SyscallIdGetThreadUmStackSize,
+    SyscallIdGetThreadUmEntryPoint,
+    
+
     // Thread Management
     SyscallIdThreadExit,
     SyscallIdThreadCreate,
