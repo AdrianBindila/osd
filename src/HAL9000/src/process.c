@@ -454,6 +454,8 @@ _ProcessInit(
             status = STATUS_HEAP_INSUFFICIENT_RESOURCES;
             __leave;
         }
+        InitializeListHead(&pProcess->FrameMappingsHead);
+        LockInit(&pProcess->FrameMapLock);
 
         RfcPreInit(&pProcess->RefCnt);
 
