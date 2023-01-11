@@ -40,6 +40,8 @@ typedef struct _THREAD_SYSTEM_DATA
 
 static THREAD_SYSTEM_DATA m_threadSystemData;
 
+static PVOID m_initialStack;
+
 __forceinline
 static
 TID
@@ -340,14 +342,18 @@ ThreadCreateEx(
     if (!Process->PagingData->Data.KernelSpace)
     {
         // Create user-mode stack
-        pThread->UserStack = MmuAllocStack(STACK_DEFAULT_SIZE,
+        pThread->UserStack = MmuAllocStack( Process->Id % 2 == 0 ?
+								            16 * PAGE_SIZE:
+								             4 * PAGE_SIZE,
                                            TRUE,
                                            FALSE,
                                            Process);
         if (pThread->UserStack == NULL)
         {
             status = STATUS_MEMORY_CANNOT_BE_COMMITED;
-            LOG_FUNC_ERROR_ALLOC("MmuAllocStack", STACK_DEFAULT_SIZE);
+            LOG_FUNC_ERROR_ALLOC("MmuAllocStack", Process->Id % 2 == 0 ?
+										                16 * PAGE_SIZE :
+										                4 * PAGE_SIZE);
             return status;
         }
 
@@ -949,9 +955,16 @@ _ThreadSetupMainThreadUserStack(
     ASSERT(ResultingStack != NULL);
     ASSERT(Process != NULL);
 
+    m_initialStack = InitialStack;
+
     *ResultingStack = (PVOID) PtrDiff(InitialStack, SHADOW_STACK_SIZE + sizeof(PVOID));
 
     return STATUS_SUCCESS;
+}
+
+PVOID ThreadGetInitialStack()
+{
+    return m_initialStack;
 }
 
 REQUIRES_EXCL_LOCK(m_threadSystemData.ReadyThreadsLock)
@@ -1237,4 +1250,13 @@ _ThreadKernelFunction(
 
     ThreadExit(exitStatus);
     NOT_REACHED;
+}
+
+
+QWORD ThreadGetTotalThreadNo()
+{
+    //LockAcquire(m_threadSystemData.ReadyThreadsLock, );
+    QWORD noOfThreads = (QWORD)ListSize(&m_threadSystemData.ReadyThreadsList);
+    //LockRelease(m_threadSystemData.ReadyThreadsLock, );
+    return noOfThreads;
 }

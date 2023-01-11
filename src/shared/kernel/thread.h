@@ -119,3 +119,7 @@ THREAD_PRIORITY
 ThreadGetPriority(
     IN_OPT  PTHREAD             Thread
     );
+
+QWORD ThreadGetTotalThreadNo();
+
+PVOID ThreadGetInitialStack();

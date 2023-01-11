@@ -8,7 +8,9 @@
 #include "process_internal.h"
 #include "dmp_cpu.h"
 #include "io.h"
+#include "pe_exports.h"
 #include "thread.h"
+#include "thread_internal.h"
 
 extern void SyscallEntry();
 
@@ -227,7 +229,7 @@ SyscallFileWrite
     if(FileHandle == UM_FILE_HANDLE_STDOUT)
     {
         LOG("[%s]:[%s}\n", ProcessGetName(NULL), Buffer);
-        IoWriteFile(FileHandle, BytesToWrite, NULL, Buffer, BytesWritten);
+        *BytesWritten = BytesToWrite;
         return STATUS_SUCCESS;
     }
     return STATUS_FILE_TYPE_INVALID;
@@ -239,7 +241,24 @@ SyscallThreadGetTid(
     OUT     TID* ThreadId
 )
 {
-    ThreadId = ThreadGetId((PTHREAD)ThreadHandle);
+    UNREFERENCED_PARAMETER(ThreadHandle)
+    *ThreadId = GetCurrentThread()->Id;
+    return STATUS_SUCCESS;
+}
+
+STATUS
+SyscallThreadGetName(
+    OUT char* ThreadName,
+    IN QWORD ThreadNameMaxLen
+)
+{
+    PTHREAD pThread = GetCurrentThread();
+
+    if (strlen(ThreadGetName(pThread))>=ThreadNameMaxLen)
+    {
+        return STATUS_TRUNCATED_THREAD_NAME;
+    }
+    strcpy(ThreadName, ThreadGetName(pThread));
     return STATUS_SUCCESS;
 }
 
@@ -248,21 +267,24 @@ SyscallGetTotalThreadNo(
     OUT QWORD* ThreadNo
 )
 {
-	ThreadNo = ThreadGetRef
+    *ThreadNo = ThreadGetTotalThreadNo();
+    return STATUS_SUCCESS;
 }
 STATUS
 SyscallGetThreadUmStackAddress(
     OUT PVOID* StackBaseAddress
 )
 {
-	
+    *StackBaseAddress = ThreadGetInitialStack();
+    return STATUS_SUCCESS;
 }
 STATUS
 SyscallGetThreadUmStackSize(
     OUT QWORD* StackSize
 )
 {
-	
+    *StackSize = GetCurrentThread()->Process->Id % 2 == 0 ?16 * PAGE_SIZE : 4 * PAGE_SIZE;
+    return STATUS_SUCCESS;
 }
 
 STATUS
@@ -270,5 +292,6 @@ SyscallGetThreadUmEntryPoint(
     OUT PVOID* EntryPoint
 )
 {
-	
+    *EntryPoint = GetCurrentThread()->Process->HeaderInfo->AddressOfEntryPoint;
+    return STATUS_SUCCESS;
 }

@@ -2,79 +2,104 @@
 #include "syscall_if.h"
 #include "um_lib_helper.h"
 
-FUNC_ThreadStart _HelloWorldFromThread;
+FUNC_ThreadStart _LightProjectApp;
 
 STATUS
 __main(
-    DWORD       argc,
-    char**      argv
-    )
+	DWORD       argc,
+	char** argv
+)
 {
-    STATUS status;
-    TID tid;
-    PID pid;
-    UM_HANDLE umHandle;
+	UNREFERENCED_PARAMETER(argc);
+	UNREFERENCED_PARAMETER(argv);
+	STATUS status;
+	TID tid;
 
-    LOG("Hello from your usermode application!\n");
+	status = SyscallThreadGetTid(UM_INVALID_HANDLE_VALUE, &tid);
+	if (!SUCCEEDED(status))
+	{
+		LOG_FUNC_ERROR("SyscallThreadGetTid", status);
+		return status;
+	}
 
-    LOG("Number of arguments 0x%x\n", argc);
-    LOG("Arguments at 0x%X\n", argv);
-    for (DWORD i = 0; i < argc; ++i)
-    {
-        LOG("Argument[%u] is at 0x%X\n", i, argv[i]);
-        LOG("Argument[%u] is %s\n", i, argv[i]);
-    }
+	LOG("Hello from thread with ID 0x%X\n", tid);
 
-    status = SyscallProcessGetPid(UM_INVALID_HANDLE_VALUE, &pid);
-    if (!SUCCEEDED(status))
-    {
-        LOG_FUNC_ERROR("SyscallProcessGetPid", status);
-        return status;
-    }
+	char threadName[256];
+	int threadNameMaxLen = 0;
+	int stop = 0;
+	while (stop < 2)//stop at thread length + 1
+	{
+		status = SyscallThreadGetName(threadName, threadNameMaxLen);
+		if (!SUCCEEDED(status))//truncated thread name
+		{
+			LOG_FUNC_ERROR("SyscallThreadGetName", status);
+			return status;
+		}
+		
+		stop++;
 
-    LOG("Hello from process with ID 0x%X\n", pid);
+		LOG("Hello from thread with NAME %s\n", threadName);
+		threadNameMaxLen++;
+	}
 
+	QWORD threadNo = 0;
+	status = SyscallGetTotalThreadNo(&threadNo);
+	if (!SUCCEEDED(status))
+	{
+		LOG_FUNC_ERROR("SyscallGetTotalThreadNo", status);
+		return status;
+	}
+	LOG("Total number of threads:%d", threadNo);
 
-    status = SyscallThreadGetTid(UM_INVALID_HANDLE_VALUE, &tid);
-    if (!SUCCEEDED(status))
-    {
-        LOG_FUNC_ERROR("SyscallThreadGetTid", status);
-        return status;
-    }
+	PVOID stackAdress;
+	status = SyscallGetThreadUmStackAddress(&stackAdress);
+	if (!SUCCEEDED(status))
+	{
+		LOG_FUNC_ERROR("SyscallGetThreadUmStackAddress", status);
+		return status;
+	}
+	LOG("Stack Address is: %p", stackAdress);
 
-    LOG("Hello from thread with ID 0x%X\n", tid);
+	QWORD stackSize;
+	status = SyscallGetThreadUmStackSize(&stackSize);
+	if (!SUCCEEDED(status))
+	{
+		LOG_FUNC_ERROR("SyscallGetThreadUmStackSize", status);
+		return status;
+	}
+	LOG("Stack size is: %d", stackSize);
 
-    status = UmThreadCreate(_HelloWorldFromThread, (PVOID)(QWORD) argc, &umHandle);
-    if (!SUCCEEDED(status))
-    {
-        LOG_FUNC_ERROR("SyscallThreadCreate", status);
-        return status;
-    }
+	PVOID entryPoint;
+	status = SyscallGetThreadUmEntryPoint(&entryPoint);
+	if (!SUCCEEDED(status))
+	{
+		LOG_FUNC_ERROR("SyscallGetThreadUmEntryPoint", status);
+		return status;
+	}
+	LOG("Usermode entry point is %p", entryPoint);
 
-    //SyscallThreadCloseHandle()
-
-    return STATUS_SUCCESS;
+	return STATUS_SUCCESS;
 }
 
 STATUS
-(__cdecl _HelloWorldFromThread)(
-    IN_OPT      PVOID       Context
-    )
+(__cdecl _LightProjectApp)(
+	IN_OPT      PVOID       Context
+	)
 {
-    STATUS status;
-    TID tid;
+	STATUS status;
+	TID tid;
 
-    ASSERT(Context != NULL);
+	ASSERT(Context != NULL);
 
-    status = SyscallThreadGetTid(UM_INVALID_HANDLE_VALUE, &tid);
-    if (!SUCCEEDED(status))
-    {
-        LOG_FUNC_ERROR("SyscallThreadGetTid", status);
-        return status;
-    }
+	status = SyscallThreadGetTid(UM_INVALID_HANDLE_VALUE, &tid);
+	if (!SUCCEEDED(status))
+	{
+		LOG_FUNC_ERROR("SyscallThreadGetTid", status);
+		return status;
+	}
 
-    LOG("Hello from thread with ID 0x%X\n", tid);
-    LOG("Context is 0x%X\n", Context);
+	LOG("Hello from thread with ID 0x%X\n", tid);
+	LOG("Context is 0x%X\n", Context);
 
-    return status;
+	return status;
 }
