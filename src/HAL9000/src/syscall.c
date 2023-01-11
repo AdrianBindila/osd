@@ -7,6 +7,7 @@
 #include "mmu.h"
 #include "process_internal.h"
 #include "dmp_cpu.h"
+#include "vmm.h"
 
 extern void SyscallEntry();
 
@@ -170,3 +171,45 @@ SyscallValidateInterface(
 }
 
 // STUDENT TODO: implement the rest of the syscalls
+STATUS
+SyscallFileWrite
+(
+    IN  UM_HANDLE                   FileHandle,
+    IN_READS_BYTES(BytesToWrite)
+    PVOID                           Buffer,
+    IN  QWORD                       BytesToWrite,
+    OUT QWORD* BytesWritten
+)
+{
+    if (FileHandle == UM_FILE_HANDLE_STDOUT)
+    {
+        LOG("[%s]:[%s}\n", ProcessGetName(NULL), Buffer);
+        *BytesWritten = BytesToWrite;
+        return STATUS_SUCCESS;
+    }
+    return STATUS_FILE_TYPE_INVALID;
+}
+STATUS
+SyscallProcessExit(
+    IN      STATUS                  ExitStatus
+)
+{
+    UNREFERENCED_PARAMETER(ExitStatus)
+    ProcessTerminate(GetCurrentProcess());
+    return STATUS_SUCCESS;
+}
+STATUS
+SyscallVirtualAlloc(
+    IN_OPT      PVOID                   BaseAddress,
+    IN          QWORD                   Size,
+    IN          VMM_ALLOC_TYPE          AllocType,
+    IN          PAGE_RIGHTS             PageRights,
+    IN_OPT      UM_HANDLE               FileHandle,
+    IN_OPT      QWORD                   Key,
+    OUT         PVOID* AllocatedAddress
+)
+{
+    UNREFERENCED_PARAMETER(Key)
+	*AllocatedAddress = VmmAllocRegionEx(BaseAddress, Size, AllocType, PageRights, TRUE, (PFILE_OBJECT)&FileHandle, NULL, NULL, NULL);
+    return STATUS_SUCCESS;
+}

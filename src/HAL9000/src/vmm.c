@@ -569,7 +569,8 @@ VmmAllocRegionEx(
             __leave;
         }
         ASSERT(NULL != pBaseAddress);
-
+        LOG("Allocating for VaSpace at 0x%X, a memory region from 0x%X of size 0x%X\n",
+            pVaSpace, pBaseAddress, alignedSize);
         if (IsBooleanFlagOn(AllocType, VMM_ALLOC_TYPE_NOT_LAZY))
         {
             ASSERT(IsBooleanFlagOn(AllocType, VMM_ALLOC_TYPE_COMMIT));
