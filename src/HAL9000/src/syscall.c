@@ -7,6 +7,8 @@
 #include "mmu.h"
 #include "process_internal.h"
 #include "dmp_cpu.h"
+#include "thread.h"
+#include "thread_internal.h"
 #include "vmm.h"
 
 extern void SyscallEntry();
@@ -69,8 +71,22 @@ SyscallHandler(
             status = SyscallValidateInterface((SYSCALL_IF_VERSION)*pSyscallParameters);
             break;
         // STUDENT TODO: implement the rest of the syscalls
+        case SyscallIdFileWrite:
+            status = SyscallFileWrite((UM_HANDLE)pSyscallParameters[0], (PVOID)pSyscallParameters[1],
+                (QWORD)pSyscallParameters[2], (QWORD*)pSyscallParameters[3]);
+            break;
+        case SyscallIdProcessExit:
+            status = SyscallProcessExit((STATUS)*pSyscallParameters);
+            break;
+        case SyscallIdVirtualAlloc:
+            status = SyscallVirtualAlloc((PVOID)pSyscallParameters[0], (QWORD)pSyscallParameters[1], (VMM_ALLOC_TYPE)pSyscallParameters[2],
+                (PAGE_RIGHTS)pSyscallParameters[3], (UM_HANDLE)pSyscallParameters[4], (QWORD)pSyscallParameters[5], (PVOID*)pSyscallParameters[6]);
+            break;
+        case SyscallIdThreadExit:
+            status = SyscallThreadExit((STATUS)pSyscallParameters[0]);
+            break;
         default:
-            LOG_ERROR("Unimplemented syscall called from User-space!\n");
+            LOG_ERROR("Unimplemented syscall %d called from User-space!\n",sysCallId);
             status = STATUS_UNSUPPORTED;
             break;
         }
@@ -188,6 +204,14 @@ SyscallFileWrite
         return STATUS_SUCCESS;
     }
     return STATUS_FILE_TYPE_INVALID;
+}
+STATUS
+SyscallThreadExit(
+    IN  STATUS                      ExitStatus
+)
+{
+    ThreadExit(ExitStatus);
+    return STATUS_SUCCESS;
 }
 STATUS
 SyscallProcessExit(
