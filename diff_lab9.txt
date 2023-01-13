@@ -1,0 +1,368 @@
+diff --git a/src/HAL9000/headers/process_internal.h b/src/HAL9000/headers/process_internal.h
+index 7ebdcc6..8fe39c9 100644
+--- a/src/HAL9000/headers/process_internal.h
++++ b/src/HAL9000/headers/process_internal.h
+@@ -33,6 +33,11 @@ typedef struct _PROCESS
+     // exiting thread from the process.
+     STATUS                          TerminationStatus;
+ 
++    LOCK                            FrameMapLock;
++
++    _Guarded_by_(FrameMapLock)
++	LIST_ENTRY                      FrameMappingsHead;
++
+     LOCK                            ThreadListLock;
+ 
+     _Guarded_by_(ThreadListLock)
+diff --git a/src/HAL9000/headers/vmm.h b/src/HAL9000/headers/vmm.h
+index f979a54..f1d9af5 100644
+--- a/src/HAL9000/headers/vmm.h
++++ b/src/HAL9000/headers/vmm.h
+@@ -8,7 +8,15 @@ typedef struct _FILE_OBJECT* PFILE_OBJECT;
+ typedef struct _VMM_RESERVATION_SPACE* PVMM_RESERVATION_SPACE;
+ 
+ typedef struct _MDL *PMDL;
++typedef struct _FRAME_MAPPING
++{
++    PHYSICAL_ADDRESS    PhysicalAddress;
++    PVOID               VirtualAddress;
+ 
++    QWORD               AccessCount;
++
++    LIST_ENTRY          ListEntry;
++} FRAME_MAPPING, * PFRAME_MAPPING;
+ _No_competing_thread_
+ void
+ VmmPreinit(
+@@ -307,3 +315,11 @@ VmmIsBufferValid(
+     IN          PVMM_RESERVATION_SPACE              ReservationSpace,
+     IN          BOOLEAN                             KernelAccess
+     );
++
++static
++void
++_VmmAddFrameMappings(
++    IN          PHYSICAL_ADDRESS    PhysicalAddress,
++    IN          PVOID               VirtualAddress,
++    IN          DWORD               FrameCount
++);
+diff --git a/src/HAL9000/src/cmd_interpreter.c b/src/HAL9000/src/cmd_interpreter.c
+index d0b254f..3115dfd 100644
+--- a/src/HAL9000/src/cmd_interpreter.c
++++ b/src/HAL9000/src/cmd_interpreter.c
+@@ -13,6 +13,8 @@
+ #include "cmd_net_helper.h"
+ #include "cmd_basic.h"
+ #include "boot_module.h"
++#include "iomu.h"
++#include "process.h"
+ 
+ #pragma warning(push)
+ 
+@@ -203,7 +205,21 @@ CmdRun(
+     DWORD bytesRead;
+ 
+     bytesRead = 0;
++    for (DWORD i = 0; i < 16; ++i)
++    {
++        STATUS status;
++        PPROCESS pProcess;
++        char fullPath[MAX_PATH];
++
++        pProcess = NULL;
+ 
++        status = snprintf(fullPath, MAX_PATH, "%sAPPLIC~1\\VirtualAllocNormal.exe",
++            IomuGetSystemPartitionPath());
++        ASSERT(SUCCEEDED(status));
++
++        status = ProcessCreate(fullPath, NULL, &pProcess);
++        ASSERT(SUCCEEDED(status));
++    }
+     exit = _CmdExecuteModuleCommands();
+     while (!exit)
+     {
+diff --git a/src/HAL9000/src/pmm.c b/src/HAL9000/src/pmm.c
+index 2347074..63414d2 100644
+--- a/src/HAL9000/src/pmm.c
++++ b/src/HAL9000/src/pmm.c
+@@ -2,7 +2,9 @@
+ #include "pmm.h"
+ #include "int15.h"
+ #include "bitmap.h"
++#include "process.h"
+ #include "synch.h"
++#include "thread_internal.h"
+ 
+ typedef struct _MEMORY_REGION_LIST
+ {
+@@ -180,6 +182,21 @@ PmmReserveMemoryEx(
+ 
+     LockRelease( &m_pmmData.AllocationLock, oldState);
+ 
++    PTHREAD pThread = GetCurrentThread();
++    PPROCESS pCurrentProcess = NULL;
++    BOOLEAN bSystemProcess;
++
++    if (pThread != NULL)
++    {
++        pCurrentProcess = pThread->Process;
++    }
++
++    bSystemProcess = (pCurrentProcess == NULL) || ProcessIsSystem(pCurrentProcess);
++
++    LOG("Reserved physical frames from 0x%X of size 0x%X on behalf of [%s] process\n",
++        idx * PAGE_SIZE, ((QWORD)NoOfFrames * PAGE_SIZE),
++        bSystemProcess ? "SYSTEM" : ProcessGetName(pCurrentProcess));
++
+     return (PHYSICAL_ADDRESS) ( (QWORD) idx * PAGE_SIZE );
+ }
+ 
+diff --git a/src/HAL9000/src/process.c b/src/HAL9000/src/process.c
+index e8143ad..42051a7 100644
+--- a/src/HAL9000/src/process.c
++++ b/src/HAL9000/src/process.c
+@@ -149,7 +149,8 @@ ProcessSystemInitSystemProcess(
+     // When this function will be called only the BSP will be active and only its main
+     // thread will be running
+     ProcessInsertThreadInList(pProcess, GetCurrentThread());
+-
++    InitializeListHead(&pProcess->FrameMappingsHead);
++    LockInit(&pProcess->FrameMapLock);
+     return status;
+ }
+ 
+@@ -712,7 +713,7 @@ _ProcessDestroy(
+     )
+ {
+     PPROCESS Process = (PPROCESS) CONTAINING_RECORD(Object, PROCESS, RefCnt);
+-
++    INTR_STATE intrState;
+     ASSERT(NULL != Process);
+     ASSERT(!ProcessIsSystem(Process));
+     ASSERT(NULL == Context);
+@@ -723,6 +724,16 @@ _ProcessDestroy(
+ 
+     LOG_TRACE_PROCESS("Will destroy process with PID 0x%X\n", Process->Id);
+ 
++    
++    LockAcquire(&Process->FrameMapLock, &intrState);
++    for (PLIST_ENTRY pCurrentEntry = Process->FrameMappingsHead.Flink;
++        pCurrentEntry != &Process->FrameMappingsHead;
++        pCurrentEntry = pCurrentEntry->Flink)
++    {
++        PFRAME_MAPPING pMapping = CONTAINING_RECORD(pCurrentEntry,FRAME_MAPPING,ListEntry);
++        LOG("Frame mapping (phys,virt): (%x,%x)", pMapping->PhysicalAddress, pMapping->VirtualAddress);
++    }
++    LockRelease(&Process->FrameMapLock, intrState);
+     // It's ok to use the remove entry list function because when we create the process we call
+     // InitializeListHead => the RemoveEntryList has no problem with an empty list as long as it
+     // is initialized :)
+diff --git a/src/HAL9000/src/syscall.c b/src/HAL9000/src/syscall.c
+index 1576f7f..cb60bcc 100644
+--- a/src/HAL9000/src/syscall.c
++++ b/src/HAL9000/src/syscall.c
+@@ -7,6 +7,9 @@
+ #include "mmu.h"
+ #include "process_internal.h"
+ #include "dmp_cpu.h"
++#include "thread.h"
++#include "thread_internal.h"
++#include "vmm.h"
+ 
+ extern void SyscallEntry();
+ 
+@@ -68,8 +71,22 @@ SyscallHandler(
+             status = SyscallValidateInterface((SYSCALL_IF_VERSION)*pSyscallParameters);
+             break;
+         // STUDENT TODO: implement the rest of the syscalls
++        case SyscallIdFileWrite:
++            status = SyscallFileWrite((UM_HANDLE)pSyscallParameters[0], (PVOID)pSyscallParameters[1],
++                (QWORD)pSyscallParameters[2], (QWORD*)pSyscallParameters[3]);
++            break;
++        case SyscallIdProcessExit:
++            status = SyscallProcessExit((STATUS)*pSyscallParameters);
++            break;
++        case SyscallIdVirtualAlloc:
++            status = SyscallVirtualAlloc((PVOID)pSyscallParameters[0], (QWORD)pSyscallParameters[1], (VMM_ALLOC_TYPE)pSyscallParameters[2],
++                (PAGE_RIGHTS)pSyscallParameters[3], (UM_HANDLE)pSyscallParameters[4], (QWORD)pSyscallParameters[5], (PVOID*)pSyscallParameters[6]);
++            break;
++        case SyscallIdThreadExit:
++            status = SyscallThreadExit((STATUS)pSyscallParameters[0]);
++            break;
+         default:
+-            LOG_ERROR("Unimplemented syscall called from User-space!\n");
++            LOG_ERROR("Unimplemented syscall %d called from User-space!\n",sysCallId);
+             status = STATUS_UNSUPPORTED;
+             break;
+         }
+@@ -169,4 +186,54 @@ SyscallValidateInterface(
+     return STATUS_SUCCESS;
+ }
+ 
+-// STUDENT TODO: implement the rest of the syscalls
+\ No newline at end of file
++// STUDENT TODO: implement the rest of the syscalls
++STATUS
++SyscallFileWrite
++(
++    IN  UM_HANDLE                   FileHandle,
++    IN_READS_BYTES(BytesToWrite)
++    PVOID                           Buffer,
++    IN  QWORD                       BytesToWrite,
++    OUT QWORD* BytesWritten
++)
++{
++    if (FileHandle == UM_FILE_HANDLE_STDOUT)
++    {
++        LOG("[%s]:[%s}\n", ProcessGetName(NULL), Buffer);
++        *BytesWritten = BytesToWrite;
++        return STATUS_SUCCESS;
++    }
++    return STATUS_FILE_TYPE_INVALID;
++}
++STATUS
++SyscallThreadExit(
++    IN  STATUS                      ExitStatus
++)
++{
++    ThreadExit(ExitStatus);
++    return STATUS_SUCCESS;
++}
++STATUS
++SyscallProcessExit(
++    IN      STATUS                  ExitStatus
++)
++{
++    UNREFERENCED_PARAMETER(ExitStatus)
++    ProcessTerminate(GetCurrentProcess());
++    return STATUS_SUCCESS;
++}
++STATUS
++SyscallVirtualAlloc(
++    IN_OPT      PVOID                   BaseAddress,
++    IN          QWORD                   Size,
++    IN          VMM_ALLOC_TYPE          AllocType,
++    IN          PAGE_RIGHTS             PageRights,
++    IN_OPT      UM_HANDLE               FileHandle,
++    IN_OPT      QWORD                   Key,
++    OUT         PVOID* AllocatedAddress
++)
++{
++    UNREFERENCED_PARAMETER(Key)
++	*AllocatedAddress = VmmAllocRegionEx(BaseAddress, Size, AllocType, PageRights, TRUE, (PFILE_OBJECT)&FileHandle, NULL, NULL, NULL);
++    return STATUS_SUCCESS;
++}
+\ No newline at end of file
+diff --git a/src/HAL9000/src/system.c b/src/HAL9000/src/system.c
+index b0b436e..37edb22 100644
+--- a/src/HAL9000/src/system.c
++++ b/src/HAL9000/src/system.c
+@@ -71,7 +71,7 @@ SystemInit(
+     pCpu = NULL;
+ 
+     LogSystemInit(LogLevelInfo,
+-                  LogComponentInterrupt | LogComponentIo | LogComponentAcpi,
++                  LogComponentInterrupt | LogComponentIo | LogComponentAcpi | LogLevelTrace | LogComponentUserMode,
+                   TRUE
+                   );
+ 
+diff --git a/src/HAL9000/src/thread.c b/src/HAL9000/src/thread.c
+index b311f0c..209f8c0 100644
+--- a/src/HAL9000/src/thread.c
++++ b/src/HAL9000/src/thread.c
+@@ -950,7 +950,7 @@ _ThreadSetupMainThreadUserStack(
+     ASSERT(ResultingStack != NULL);
+     ASSERT(Process != NULL);
+ 
+-    *ResultingStack = InitialStack;
++    *ResultingStack = (PVOID)PtrDiff(InitialStack, SHADOW_STACK_SIZE + sizeof(PVOID));
+ 
+     return STATUS_SUCCESS;
+ }
+@@ -1016,7 +1016,7 @@ _ThreadSchedule(
+         // to be careful before logging its name
+         if (pCpu->ThreadData.PreviousThread != NULL)
+         {
+-            LOG_TRACE_THREAD("Prev thread: %s\n", pCpu->ThreadData.PreviousThread->Name);
++            //LOG_TRACE_THREAD("Prev thread: %s\n", pCpu->ThreadData.PreviousThread->Name);
+         }
+     }
+     else
+diff --git a/src/HAL9000/src/vmm.c b/src/HAL9000/src/vmm.c
+index a70a2cb..1459d2f 100644
+--- a/src/HAL9000/src/vmm.c
++++ b/src/HAL9000/src/vmm.c
+@@ -569,7 +569,8 @@ VmmAllocRegionEx(
+             __leave;
+         }
+         ASSERT(NULL != pBaseAddress);
+-
++        LOG("Allocating for VaSpace at 0x%X, a memory region from 0x%X of size 0x%X\n",
++            pVaSpace, pBaseAddress, alignedSize);
+         if (IsBooleanFlagOn(AllocType, VMM_ALLOC_TYPE_NOT_LAZY))
+         {
+             ASSERT(IsBooleanFlagOn(AllocType, VMM_ALLOC_TYPE_COMMIT));
+@@ -608,6 +609,10 @@ VmmAllocRegionEx(
+                                      Uncacheable,
+                                      PagingData
+                 );
++                if (PagingData != NULL && !PagingData->Data.KernelSpace)
++                {
++                    _VmmAddFrameMappings(pa, pBaseAddress, noOfFrames);
++                }
+ 
+                 // Check if the mapping is backed up by a file
+                 if (FileObject != NULL)
+@@ -813,7 +818,10 @@ VmmSolvePageFault(
+                                  uncacheable,
+                                  PagingData
+                                  );
+-
++            if (!PagingData->Data.KernelSpace)
++            {
++                _VmmAddFrameMappings(pa, alignedAddress, 1);
++            }
+             // 3. If the virtual address is backed by a file read its contents
+             if (pBackingFile != NULL)
+             {
+@@ -1370,4 +1378,72 @@ BOOLEAN
+     }
+ 
+     return bContinue;
++}
++
++static
++void
++_VmmAddFrameMappings(
++    IN          PHYSICAL_ADDRESS    PhysicalAddress,
++    IN          PVOID               VirtualAddress,
++    IN          DWORD               FrameCount
++)
++{
++    PPROCESS pProcess;
++    PFRAME_MAPPING pMapping;
++    INTR_STATE intrState;
++
++    pProcess = GetCurrentProcess();
++
++    if (ProcessIsSystem(pProcess))
++    {
++        return;
++    }
++
++    for (DWORD i = 0; i < FrameCount; ++i)
++    {
++        pMapping = ExAllocatePoolWithTag(PoolAllocatePanicIfFail, sizeof(FRAME_MAPPING), HEAP_MMU_TAG, 0);
++
++        pMapping->PhysicalAddress = PtrOffset(PhysicalAddress, i * PAGE_SIZE);
++        pMapping->VirtualAddress = PtrOffset(VirtualAddress, i * PAGE_SIZE);
++        pMapping->AccessCount = 1;
++
++        LockAcquire(&pProcess->FrameMapLock, &intrState);
++        InsertTailList(&pProcess->FrameMappingsHead, &pMapping->ListEntry);
++        LockRelease(&pProcess->FrameMapLock, intrState);
++
++        LOG("Allocated entry from 0x%X -> 0x%X\n",
++            pMapping->VirtualAddress, pMapping->PhysicalAddress);
++    }
++}

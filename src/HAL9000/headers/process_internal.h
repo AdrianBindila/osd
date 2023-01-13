@@ -33,6 +33,11 @@ typedef struct _PROCESS
     // exiting thread from the process.
     STATUS                          TerminationStatus;
 
+    LOCK                            FrameMapLock;
+
+    _Guarded_by_(FrameMapLock)
+	LIST_ENTRY                      FrameMappingsHead;
+
     LOCK                            ThreadListLock;
 
     _Guarded_by_(ThreadListLock)

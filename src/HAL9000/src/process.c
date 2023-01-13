@@ -149,7 +149,8 @@ ProcessSystemInitSystemProcess(
     // When this function will be called only the BSP will be active and only its main
     // thread will be running
     ProcessInsertThreadInList(pProcess, GetCurrentThread());
-
+    InitializeListHead(&pProcess->FrameMappingsHead);
+    LockInit(&pProcess->FrameMapLock);
     return status;
 }
 
@@ -712,7 +713,7 @@ _ProcessDestroy(
     )
 {
     PPROCESS Process = (PPROCESS) CONTAINING_RECORD(Object, PROCESS, RefCnt);
-
+    INTR_STATE intrState;
     ASSERT(NULL != Process);
     ASSERT(!ProcessIsSystem(Process));
     ASSERT(NULL == Context);
@@ -723,6 +724,16 @@ _ProcessDestroy(
 
     LOG_TRACE_PROCESS("Will destroy process with PID 0x%X\n", Process->Id);
 
+    
+    LockAcquire(&Process->FrameMapLock, &intrState);
+    for (PLIST_ENTRY pCurrentEntry = Process->FrameMappingsHead.Flink;
+        pCurrentEntry != &Process->FrameMappingsHead;
+        pCurrentEntry = pCurrentEntry->Flink)
+    {
+        PFRAME_MAPPING pMapping = CONTAINING_RECORD(pCurrentEntry,FRAME_MAPPING,ListEntry);
+        LOG("Frame mapping (phys,virt): (%x,%x)", pMapping->PhysicalAddress, pMapping->VirtualAddress);
+    }
+    LockRelease(&Process->FrameMapLock, intrState);
     // It's ok to use the remove entry list function because when we create the process we call
     // InitializeListHead => the RemoveEntryList has no problem with an empty list as long as it
     // is initialized :)
